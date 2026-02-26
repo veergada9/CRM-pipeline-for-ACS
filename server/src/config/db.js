@@ -1,3 +1,5 @@
+import dns from "node:dns";
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 import mongoose from "mongoose";
 
 const connectDB = async () => {
@@ -11,6 +13,8 @@ const connectDB = async () => {
   try {
     await mongoose.connect(uri, {
       dbName: process.env.MONGO_DB_NAME || "acs_leads",
+      serverSelectionTimeoutMS: 10000,
+      connectTimeoutMS: 10000,
     });
     console.log("MongoDB connected");
   } catch (err) {
