@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import acsLogo from './assets/acs-logo.png';
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:5000/api';
+const API_BASE = process.env.REACT_APP_API_BASE || 'https://crm-pipeline-for-acs-iwb5.vercel.app/api';
 
 const STAGES = ['New', 'Qualified', 'Meeting Booked', 'Proposal Sent', 'Won', 'Lost'];
 
