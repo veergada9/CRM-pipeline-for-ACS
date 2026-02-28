@@ -53,15 +53,15 @@ function Toast({ message, meta }) {
   );
 }
 
-function PublicLeadForm({ onSubmitted, token, salesUsers }) {
+function PublicLeadForm({ onSubmitted }) {
   const [form, setForm] = useState({
     leadType: 'CHS', name: '', phone: '', email: '', area: '', locality: '',
     propertySizeFlats: '', parkingType: 'basement', currentEvCount: '',
-    chargerInterest: [], notes: '', consent: true, decisionMakerKnown: false, owner: '',
+    chargerInterest: [], notes: '', consent: true, decisionMakerKnown: false,
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [lastLeadId, setLastLeadId] = useState('');
+  const [lastResult, setLastResult] = useState(null);
 
   const toggleCharger = (value) => {
     setForm((prev) => {
@@ -78,11 +78,11 @@ function PublicLeadForm({ onSubmitted, token, salesUsers }) {
     if (!form.name || !form.phone || !form.area) { setError('Please fill contact name, mobile and area.'); return; }
     setError(''); setSubmitting(true);
     try {
-      const payload = { ...form, propertySizeFlats: form.propertySizeFlats ? Number(form.propertySizeFlats) : undefined, currentEvCount: form.currentEvCount ? Number(form.currentEvCount) : undefined, owner: form.owner || undefined };
+      const payload = { ...form, propertySizeFlats: form.propertySizeFlats ? Number(form.propertySizeFlats) : undefined, currentEvCount: form.currentEvCount ? Number(form.currentEvCount) : undefined };
       const res = await apiFetch('/leads/public', { method: 'POST', body: payload, publicRoute: true });
       onSubmitted?.(res.leadId);
-      setLastLeadId(res.leadId || '');
-      setForm((prev) => ({ ...prev, name: '', phone: '', email: '', locality: '', propertySizeFlats: '', currentEvCount: '', notes: '', decisionMakerKnown: false, owner: '' }));
+      setLastResult(res);
+      setForm((prev) => ({ ...prev, name: '', phone: '', email: '', locality: '', propertySizeFlats: '', currentEvCount: '', notes: '', decisionMakerKnown: false }));
     } catch (err) { console.error(err); onSubmitted?.(null, err); } finally { setSubmitting(false); }
   };
   return (
@@ -120,25 +120,18 @@ function PublicLeadForm({ onSubmitted, token, salesUsers }) {
               <button key={kw} type="button" onClick={() => toggleCharger(kw)} className="ev-ghost-chip"
                 style={form.chargerInterest.includes(kw) ? { borderStyle: 'solid', borderColor: 'rgba(56,189,248,0.9)', color: '#e0f2fe', background: 'radial-gradient(circle at top left, rgba(56,189,248,0.25), rgba(15,23,42,0.95))' } : undefined}>{kw} kW</button>
             ))}</div></div>
-          {token && salesUsers && salesUsers.length > 0 && (
-            <div className="ev-field"><div className="ev-label-row"><span className="ev-label">Assign to salesperson</span></div>
-              <select name="owner" value={form.owner} onChange={handleChange} className="ev-select">
-                <option value="">— Auto assign —</option>
-                {salesUsers.filter(u => u.role === 'sales' && u.isActive !== false).map(u => (<option key={u._id || u.id} value={u._id || u.id}>{u.name}</option>))}
-              </select></div>
-          )}
         </div>
         <div style={{ marginTop: 10 }}>
           <div className="ev-field"><div className="ev-label-row"><span className="ev-label">Notes</span><span className="ev-hint">Decision flow, objections, timing</span></div>
             <textarea name="notes" value={form.notes} onChange={handleChange} className="ev-textarea" placeholder="Capture context for ACS sales team…" /></div>
           <div className="ev-checkbox-row"><input type="checkbox" name="consent" checked={form.consent} onChange={handleChange} /><span>I have consent to be contacted by ACS on phone/WhatsApp/email regarding EV charging.</span></div>
         </div>
-        <div style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between' }}>
-          <span className="ev-pill-small">Lead score auto-calculates once saved</span>
+        <div style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span className="ev-pill-small">Auto-assigned to available salesperson</span>
           <button className="ev-primary-btn" type="submit" disabled={submitting}><span>{submitting ? 'Saving lead…' : 'Create Lead'}</span></button>
         </div>
         {error && <div style={{ marginTop: 8, fontSize: 12, color: '#fecaca' }}>{error}</div>}
-        {!error && lastLeadId && <div style={{ marginTop: 8, fontSize: 12, color: '#bbf7d0' }}>Thank you, the lead has been captured. Lead ID: <strong>{lastLeadId}</strong></div>}
+        {!error && lastResult && <div style={{ marginTop: 8, fontSize: 12, color: '#bbf7d0' }}>Lead captured. ID: <strong>{lastResult.leadId}</strong>{lastResult.assignedTo && <> · Assigned to <strong>{lastResult.assignedTo}</strong></>}</div>}
       </form>
     </div>
   );
@@ -200,15 +193,21 @@ function KanbanBoard({ leads, onSelect }) {
   );
 }
 
-function LeadList({ leads, onSelect }) {
+function LeadList({ leads, onSelect, users, token, showFilters }) {
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [sortField, setSortField] = useState('createdAt');
   const [sortDir, setSortDir] = useState('desc');
   const viewLeads = useMemo(() => {
     let rows = [...leads];
     if (search) { const q = search.toLowerCase(); rows = rows.filter((l) => (l.locality || '').toLowerCase().includes(q) || (l.name || '').toLowerCase().includes(q) || (l.phone || '').toLowerCase().includes(q) || (l.area || '').toLowerCase().includes(q)); }
     if (stageFilter) rows = rows.filter((l) => (l.stage || 'New') === stageFilter);
+    if (ownerFilter) rows = rows.filter((l) => l.owner && (l.owner._id === ownerFilter || l.owner === ownerFilter));
+    if (fromDate) rows = rows.filter((l) => new Date(l.createdAt) >= new Date(fromDate));
+    if (toDate) rows = rows.filter((l) => new Date(l.createdAt) <= new Date(toDate + 'T23:59:59'));
     rows.sort((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
       if (sortField === 'score') return ((a.leadScore || 0) - (b.leadScore || 0)) * dir;
@@ -217,14 +216,42 @@ function LeadList({ leads, onSelect }) {
       const ad = new Date(a.createdAt || 0).getTime(); const bd = new Date(b.createdAt || 0).getTime(); return (ad - bd) * dir;
     });
     return rows;
-  }, [leads, search, stageFilter, sortField, sortDir]);
+  }, [leads, search, stageFilter, ownerFilter, fromDate, toDate, sortField, sortDir]);
   const toggleSort = (field) => { setSortField((pf) => { if (pf === field) { setSortDir((pd) => (pd === 'asc' ? 'desc' : 'asc')); return pf; } setSortDir('asc'); return field; }); };
+  const handleExportCSV = async () => {
+    const params = new URLSearchParams();
+    if (ownerFilter) params.set('owner', ownerFilter);
+    if (stageFilter) params.set('stage', stageFilter);
+    if (fromDate) params.set('fromDate', fromDate);
+    if (toDate) params.set('toDate', toDate);
+    const url = `${API_BASE}/api/leads/export/csv/all?${params.toString()}`;
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(url, { headers });
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'acs-leads.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
   return (
-    <div className="ev-panel" style={{ marginTop: 12 }}>
-      <div className="ev-panel-header"><div><div className="ev-panel-title">Leads list</div><div className="ev-panel-subtitle">Search and filter for ACS sales ops.</div></div></div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 12 }}>
-        <input className="ev-input" style={{ maxWidth: 260 }} placeholder="Search by name, area, phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <select className="ev-select" style={{ maxWidth: 160 }} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}><option value="">All stages</option>{STAGES.map((s) => (<option key={s} value={s}>{s}</option>))}</select>
+    <div className="ev-panel" style={{ marginTop: showFilters ? 0 : 12 }}>
+      <div className="ev-panel-header"><div><div className="ev-panel-title">Leads list</div><div className="ev-panel-subtitle">Search, filter and export lead data.</div></div>
+        {showFilters && token && <button type="button" className="ev-primary-btn" onClick={handleExportCSV}>📥 Export CSV</button>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 12, flexWrap: 'wrap' }}>
+        <input className="ev-input" style={{ maxWidth: 220 }} placeholder="Search by name, area, phone…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <select className="ev-select" style={{ maxWidth: 140 }} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}><option value="">All stages</option>{STAGES.map((s) => (<option key={s} value={s}>{s}</option>))}</select>
+        {showFilters && users && users.length > 0 && (
+          <select className="ev-select" style={{ maxWidth: 160 }} value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}>
+            <option value="">All salespeople</option>{users.filter(u => u.role === 'sales').map(u => (<option key={u._id || u.id} value={u._id || u.id}>{u.name}</option>))}
+          </select>
+        )}
+        {showFilters && <>
+          <input className="ev-input" style={{ maxWidth: 140 }} type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} title="From date" />
+          <input className="ev-input" style={{ maxWidth: 140 }} type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} title="To date" />
+        </>}
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table className="ev-table"><thead><tr>
@@ -246,6 +273,8 @@ function LeadList({ leads, onSelect }) {
 function LeadDetail({ lead, details, onAddActivity, onCancel }) {
   const [updatingStage, setUpdatingStage] = useState(false);
   const [stage, setStage] = useState(lead?.stage || 'New');
+  const [meetingDate, setMeetingDate] = useState('');
+  const [proposalName, setProposalName] = useState('');
   useEffect(() => { setStage(lead?.stage || 'New'); }, [lead]);
   if (!lead) {
     return (<div className="ev-panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 200, textAlign: 'center', gap: '0.5rem' }}><div style={{ fontSize: '2rem' }}>📂</div><div className="ev-panel-title">Select a lead to open detail view</div><div className="ev-panel-subtitle">Click any card on the Kanban board or a row in the leads list.</div></div>);
@@ -253,6 +282,21 @@ function LeadDetail({ lead, details, onAddActivity, onCancel }) {
   const whatsappHref = lead.phone ? `https://wa.me/${lead.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hi ${lead.name || ''}, following up from ACS about EV charging at ${lead.locality || 'your premises'}.`)}` : null;
   const scoreClass = lead.leadScore == null ? '' : lead.leadScore >= 7 ? 'high' : lead.leadScore >= 4 ? 'mid' : 'low';
   const commActivities = (details?.activities || []).filter(a => ['call', 'email', 'whatsapp', 'meeting'].includes(a.type));
+  const journeyEvents = (details?.activities || []).filter(a => a.subject && a.subject.startsWith('Stage:')).reverse();
+  const buildStageNote = () => {
+    if (stage === 'Meeting Booked' && meetingDate) return `Meeting scheduled for ${new Date(meetingDate).toLocaleString()}`;
+    if (stage === 'Proposal Sent' && proposalName) return `Proposal: ${proposalName}`;
+    return `Lead moved to ${stage}`;
+  };
+  const handleUpdateStage = async (targetStage) => {
+    const stg = targetStage || stage;
+    setUpdatingStage(true);
+    const note = targetStage === 'Won' ? 'Order marked as success (Won)' : buildStageNote();
+    try {
+      await onAddActivity(lead._id, { type: 'note', description: note }, { updateStage: stg, stageNote: note });
+      setMeetingDate(''); setProposalName('');
+    } finally { setUpdatingStage(false); }
+  };
   return (
     <div className="ev-panel">
       <div className="ev-panel-header">
@@ -265,7 +309,7 @@ function LeadDetail({ lead, details, onAddActivity, onCancel }) {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
           {whatsappHref && <a href={whatsappHref} target="_blank" rel="noreferrer" className="ev-whatsapp-link"><span className="ev-whatsapp-bubble">WA</span><span>Click-to-chat</span></a>}
-          <span className="ev-tag">Next step: {lead.stage || 'New'}</span>
+          <span className="ev-tag">Current: {lead.stage || 'New'}</span>
         </div>
       </div>
       <div className="ev-lead-detail-layout">
@@ -273,14 +317,26 @@ function LeadDetail({ lead, details, onAddActivity, onCancel }) {
           <div className="ev-field" style={{ marginBottom: '0.6rem' }}><div className="ev-label-row"><span className="ev-label">Contact snapshot</span></div></div>
           <div className="ev-detail-snapshot">
             <div className="ev-detail-row"><span className="ev-detail-row-label">Contact</span><span style={{ color: '#e2e8f0', fontWeight: 500 }}>{lead.name || '—'}</span></div>
-            {lead.phone && <div className="ev-detail-row"><span className="ev-detail-row-label">Phone</span><a href={`tel:${lead.phone}`} style={{ color: '#7dd3fc', textDecoration: 'none' }} onClick={async (e) => { e.preventDefault(); await onAddActivity(lead._id, { type: 'call', description: 'Call initiated via click-to-call' }); window.location.href = `tel:${lead.phone}`; }}>{lead.phone}</a></div>}
-            {lead.email && <div className="ev-detail-row"><span className="ev-detail-row-label">Email</span><a href={`mailto:${lead.email}?subject=ACS EV charging follow-up`} style={{ color: '#7dd3fc', textDecoration: 'none' }} onClick={async (e) => { e.preventDefault(); await onAddActivity(lead._id, { type: 'email', description: 'Email composed via click-to-email link' }); window.location.href = `mailto:${lead.email}?subject=ACS EV charging follow-up`; }}>{lead.email}</a></div>}
+            {lead.phone && <div className="ev-detail-row"><span className="ev-detail-row-label">Phone</span><a href={`tel:${lead.phone}`} style={{ color: '#7dd3fc', textDecoration: 'none' }}>{lead.phone}</a></div>}
+            {lead.email && <div className="ev-detail-row"><span className="ev-detail-row-label">Email</span><a href={`mailto:${lead.email}`} style={{ color: '#7dd3fc', textDecoration: 'none' }}>{lead.email}</a></div>}
             <div className="ev-detail-row"><span className="ev-detail-row-label">EVs on site</span><span>{lead.currentEvCount ?? '—'}</span></div>
             <div className="ev-detail-row"><span className="ev-detail-row-label">Parking</span><span style={{ textTransform: 'capitalize' }}>{lead.parkingType || '—'}</span></div>
             <div className="ev-detail-row"><span className="ev-detail-row-label">Next follow-up</span><span style={{ color: lead.nextFollowUpDate ? '#fcd34d' : '#475569' }}>{lead.nextFollowUpDate ? new Date(lead.nextFollowUpDate).toLocaleDateString() : 'Not scheduled'}</span></div>
             <div className="ev-detail-row"><span className="ev-detail-row-label">Chargers</span><span>{lead.chargerInterest && lead.chargerInterest.length ? lead.chargerInterest.join(', ') + ' kW' : <span style={{ color: '#475569' }}>Not captured</span>}</span></div>
             {lead.notes && <div style={{ borderTop: '1px solid rgba(51,65,85,0.5)', paddingTop: '0.5rem', marginTop: '0.25rem', color: '#94a3b8', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{lead.notes}</div>}
-            {!lead.notes && <div style={{ color: '#334155', fontStyle: 'italic', fontSize: '0.72rem' }}>No notes yet. Log your first activity below.</div>}
+          </div>
+          <div className="ev-field" style={{ marginTop: '1rem' }}><div className="ev-label-row"><span className="ev-label">🗺️ Lead Journey</span><span className="ev-hint">Stage transitions</span></div></div>
+          <div className="ev-comm-history">
+            {journeyEvents.length > 0 ? journeyEvents.map((a) => (
+              <div key={a._id} className="ev-comm-item">
+                <div className={`ev-activity-dot ${a.type || ''}`} />
+                <div>
+                  <div className="ev-activity-meta"><span className="ev-activity-type" style={{ color: '#38bdf8' }}>{a.subject}</span><span>{new Date(a.createdAt).toLocaleDateString()} {new Date(a.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+                  <div className="ev-activity-body">{a.description}</div>
+                  {a.user && <div className="ev-comm-by">by {a.user.name || 'System'}</div>}
+                </div>
+              </div>
+            )) : <div style={{ fontSize: '0.75rem', color: '#334155', textAlign: 'center', padding: '0.75rem 0', fontStyle: 'italic' }}>No stage transitions yet.</div>}
           </div>
           <div className="ev-field" style={{ marginTop: '1rem' }}><div className="ev-label-row"><span className="ev-label">📧 Communication history</span><span className="ev-hint">Calls, emails, meetings</span></div></div>
           <div className="ev-comm-history">
@@ -294,19 +350,27 @@ function LeadDetail({ lead, details, onAddActivity, onCancel }) {
                   {a.user && <div className="ev-comm-by">by {a.user.name || 'Unknown'} ({a.user.role})</div>}
                 </div>
               </div>
-            )) : <div style={{ fontSize: '0.75rem', color: '#334155', textAlign: 'center', padding: '1rem 0', fontStyle: 'italic' }}>No communication history yet.</div>}
+            )) : <div style={{ fontSize: '0.75rem', color: '#334155', textAlign: 'center', padding: '0.75rem 0', fontStyle: 'italic' }}>No communication history yet.</div>}
           </div>
         </div>
         <div>
-          <div className="ev-field"><div className="ev-label-row"><span className="ev-label">Activity log</span><span className="ev-hint">All touchpoints</span></div></div>
-          <div className="ev-field" style={{ marginTop: 4, marginBottom: 4 }}><div className="ev-label-row"><span className="ev-label">Stage</span><span className="ev-hint">Move this deal forward</span></div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="ev-field"><div className="ev-label-row"><span className="ev-label">Stage</span><span className="ev-hint">Move this deal forward</span></div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
               <select className="ev-select" value={stage} onChange={(e) => setStage(e.target.value)}>{STAGES.map((s) => (<option key={s} value={s}>{s}</option>))}</select>
-              <button type="button" className="ev-primary-btn" disabled={updatingStage} onClick={async () => { setUpdatingStage(true); try { await onAddActivity(lead._id, { type: 'note', description: `Stage updated to ${stage}` }, { updateStage: stage }); } finally { setUpdatingStage(false); } }}>{updatingStage ? 'Updating…' : 'Update stage'}</button>
-              <button type="button" className="ev-primary-btn" disabled={updatingStage} onClick={async () => { setStage('Won'); setUpdatingStage(true); try { await onAddActivity(lead._id, { type: 'note', description: 'Order marked as success (Won)' }, { updateStage: 'Won' }); } finally { setUpdatingStage(false); } }}>Mark success</button>
+              <button type="button" className="ev-primary-btn" disabled={updatingStage} onClick={() => handleUpdateStage()}>{updatingStage ? 'Updating…' : 'Update stage'}</button>
+              <button type="button" className="ev-primary-btn" disabled={updatingStage} onClick={() => { setStage('Won'); handleUpdateStage('Won'); }}>Mark success</button>
               <button type="button" className="ev-danger-btn" onClick={() => { if (!onCancel) return; if (window.confirm('Cancel this order and remove it permanently?')) { onCancel(lead._id); } }}>Cancel order</button>
             </div>
           </div>
+          {stage === 'Meeting Booked' && (
+            <div className="ev-field" style={{ marginTop: 6 }}><div className="ev-label-row"><span className="ev-label">📅 Meeting date & time</span></div>
+              <input className="ev-input" type="datetime-local" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></div>
+          )}
+          {stage === 'Proposal Sent' && (
+            <div className="ev-field" style={{ marginTop: 6 }}><div className="ev-label-row"><span className="ev-label">📄 Proposal name / details</span></div>
+              <input className="ev-input" placeholder="e.g. ACS-Q1-2026 EV Charger Package" value={proposalName} onChange={(e) => setProposalName(e.target.value)} /></div>
+          )}
+          <div className="ev-field" style={{ marginTop: 8 }}><div className="ev-label-row"><span className="ev-label">Activity log</span><span className="ev-hint">All touchpoints</span></div></div>
           <div className="ev-activity-list">
             {(details?.activities || []).map((a) => (
               <div key={a._id} className="ev-activity-item"><div className={`ev-activity-dot ${a.type || ''}`} /><div>
@@ -341,19 +405,17 @@ function AddActivityForm({ onAdd }) {
           <option value="call">Call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="meeting">Meeting</option><option value="note">Note</option>
         </select>
         <input className="ev-input" style={{ maxWidth: 180 }} placeholder="Subject (optional)" value={subject} onChange={(e) => setSubject(e.target.value)} />
-        <textarea className="ev-textarea" style={{ minHeight: 40, flex: 1 }} placeholder="Quick note of what happened and next step…" value={description} onChange={(e) => setDescription(e.target.value)} />
+        <textarea className="ev-textarea" style={{ minHeight: 40, flex: 1 }} placeholder="Quick note…" value={description} onChange={(e) => setDescription(e.target.value)} />
         <button type="submit" className="ev-primary-btn" disabled={saving}>{saving ? 'Logging…' : 'Log'}</button>
       </div>
     </form>
   );
 }
 
-function MetricsPanel({ metrics, onGoToReports }) {
+function MetricsPanel({ metrics }) {
   return (
     <div className="ev-panel">
-      <div className="ev-panel-header"><div><div className="ev-panel-title">Pipeline health</div><div className="ev-panel-subtitle">Weekly new leads, conversion to meetings, and locality hotspots.</div></div>
-        {onGoToReports && <button type="button" className="ev-tag ev-tag-button" onClick={onGoToReports}>View Reports</button>}
-      </div>
+      <div className="ev-panel-header"><div><div className="ev-panel-title">Pipeline health</div><div className="ev-panel-subtitle">Weekly new leads, conversion to meetings, and locality hotspots.</div></div></div>
       <div className="ev-metric-grid">
         <div className="ev-metric-card"><div className="ev-metric-label"><span>New leads this week</span></div><div className="ev-metric-value" style={{ color: '#67e8f9' }}>{metrics?.newLeadsThisWeek ?? '—'}</div></div>
         <div className="ev-metric-card"><div className="ev-metric-label"><span>New → Meeting rate</span><span className="ev-metric-chip">Booked</span></div><div className="ev-metric-value" style={{ color: '#fcd34d' }}>{metrics?.conversionNewToMeeting != null ? `${metrics.conversionNewToMeeting}%` : '—'}</div></div>
@@ -375,13 +437,15 @@ function AppShell({ user, onLogout, view, setView }) {
   const initials = user?.name ? user.name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase() : 'AC';
   const isAdmin = user?.role === 'admin';
   const navItems = isAdmin ? [
-    { id: 'pipeline', label: 'Pipeline', icon: '⚡' },
+    { id: 'leadList', label: 'Lead List', icon: '📋' },
+    { id: 'pipelineHealth', label: 'Pipeline Health', icon: '💹' },
     { id: 'reports', label: 'Reports', icon: '📊' },
     { id: 'history', label: 'History', icon: '🏆' },
     { id: 'salesTeam', label: 'Sales Team', icon: '📈' },
     { id: 'team', label: 'Manage Team', icon: '👥' },
   ] : [
-    { id: 'pipeline', label: 'Pipeline', icon: '⚡' },
+    { id: 'leadList', label: 'Lead List', icon: '📋' },
+    { id: 'pipelineHealth', label: 'Pipeline Health', icon: '💹' },
     { id: 'myTarget', label: 'My Target', icon: '🎯' },
     { id: 'reports', label: 'Reports', icon: '📊' },
     { id: 'history', label: 'History', icon: '🏆' },
@@ -401,9 +465,8 @@ function AppShell({ user, onLogout, view, setView }) {
         <div className={`ev-sidebar-sub ${leadsOpen ? 'open' : ''}`}>
           <button type="button" className={`ev-sidebar-item ${view === 'capture' ? 'active' : ''}`} onClick={() => setView('capture')}><span>Create Lead</span>{view === 'capture' && <span className="ev-dot" />}</button>
           <button type="button" className={`ev-sidebar-item ${view === 'pipeline' ? 'active' : ''}`} onClick={() => setView('pipeline')}><span>Pipeline</span>{view === 'pipeline' && <span className="ev-dot" />}</button>
-          <button type="button" className={`ev-sidebar-item ${view === 'pipelineHealth' ? 'active' : ''}`} onClick={() => setView('pipelineHealth')}><span>Pipeline Health</span>{view === 'pipelineHealth' && <span className="ev-dot" />}</button>
         </div>
-        {navItems.filter(i => i.id !== 'pipeline').map((item) => (
+        {navItems.map((item) => (
           <button key={item.id} type="button" className={`ev-sidebar-item ${view === item.id ? 'active' : ''}`} onClick={() => setView(item.id)}>
             <span className="ev-icon">{item.icon}</span><span>{item.label}</span>{view === item.id && <span className="ev-dot" />}
           </button>
@@ -418,33 +481,50 @@ function AppShell({ user, onLogout, view, setView }) {
   );
 }
 
-function SalesTeamPanel({ salesPerformance, onUpdateTarget, auth }) {
+function SalesTeamPanel({ salesPerformance, onUpdateTarget, onSelectLead }) {
   const [editingId, setEditingId] = useState(null);
   const [targetVal, setTargetVal] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
   const startEdit = (u) => { setEditingId(u._id); setTargetVal(String(u.salesTarget || 0)); };
-  const saveTarget = async (userId) => {
-    await onUpdateTarget(userId, Number(targetVal));
-    setEditingId(null);
-  };
+  const saveTarget = async (userId) => { await onUpdateTarget(userId, Number(targetVal)); setEditingId(null); };
   return (
     <div className="ev-panel">
-      <div className="ev-panel-header"><div><div className="ev-panel-title">📈 Sales Team Performance</div><div className="ev-panel-subtitle">Track targets, progress, and incentives for each salesperson.</div></div><span className="ev-tag">Admin only</span></div>
+      <div className="ev-panel-header"><div><div className="ev-panel-title">📈 Sales Team Performance</div><div className="ev-panel-subtitle">Click a row to see their leads. Set targets and track incentives.</div></div><span className="ev-tag">Admin only</span></div>
       <table className="ev-table"><thead><tr><th>Name</th><th>Assigned</th><th>Pending</th><th>Won</th><th>Target</th><th>Progress</th><th>Incentive</th><th>Actions</th></tr></thead>
         <tbody>
           {(salesPerformance || []).map((u) => {
             const pct = u.salesTarget > 0 ? Math.min(100, Math.round((u.salesAchieved / u.salesTarget) * 100)) : 0;
-            return (
-              <tr key={u._id}>
-                <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{u.name}</td>
+            const isExpanded = expandedId === u._id;
+            return (<React.Fragment key={u._id}>
+              <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(isExpanded ? null : u._id)}>
+                <td style={{ fontWeight: 600, color: '#e2e8f0' }}>{isExpanded ? '▾' : '▸'} {u.name}</td>
                 <td>{u.assignedLeads}</td><td>{u.pendingLeads}</td><td style={{ color: '#4ade80', fontWeight: 600 }}>{u.salesAchieved}</td>
-                <td>{editingId === u._id ? <div style={{ display: 'flex', gap: 4 }}><input className="ev-input" style={{ width: 60, padding: '0.25rem 0.4rem' }} type="number" min="0" value={targetVal} onChange={(e) => setTargetVal(e.target.value)} /><button className="ev-primary-btn" style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }} onClick={() => saveTarget(u._id)}>✓</button></div> : u.salesTarget || 0}</td>
+                <td onClick={(e) => e.stopPropagation()}>{editingId === u._id ? <div style={{ display: 'flex', gap: 4 }}><input className="ev-input" style={{ width: 60, padding: '0.25rem 0.4rem' }} type="number" min="0" value={targetVal} onChange={(e) => setTargetVal(e.target.value)} /><button className="ev-primary-btn" style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem' }} onClick={() => saveTarget(u._id)}>✓</button></div> : u.salesTarget || 0}</td>
                 <td style={{ minWidth: 100 }}><div className="ev-progress-bar"><div className={`ev-progress-fill ${u.incentiveEligible ? 'achieved' : ''}`} style={{ width: `${pct}%` }} /></div><div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: 2 }}>{pct}%</div></td>
                 <td>{u.incentiveEligible ? <span className="ev-incentive-badge achieved">🏆 Target Achieved</span> : u.salesTarget > 0 ? <span className="ev-incentive-badge pending">⏳ In Progress</span> : <span style={{ fontSize: '0.65rem', color: '#475569' }}>No target</span>}</td>
-                <td><button className="ev-tag ev-tag-button" onClick={() => startEdit(u)}>Set Target</button></td>
+                <td onClick={(e) => e.stopPropagation()}><button className="ev-tag ev-tag-button" onClick={() => startEdit(u)}>Set Target</button></td>
               </tr>
-            );
+              {isExpanded && (
+                <tr><td colSpan="8" style={{ padding: 0, background: 'rgba(15,23,42,0.5)' }}>
+                  <div style={{ padding: '0.5rem 1rem' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#64748b', marginBottom: 4 }}>Leads assigned to {u.name}:</div>
+                    {u.leads && u.leads.length > 0 ? (
+                      <table className="ev-table" style={{ fontSize: '0.72rem' }}><thead><tr><th>Lead ID</th><th>Name</th><th>Area</th><th>Stage</th><th>Created</th></tr></thead><tbody>
+                        {u.leads.map(l => (
+                          <tr key={l._id} style={{ cursor: 'pointer' }} onClick={() => onSelectLead && onSelectLead(l)}>
+                            <td>{l.leadId || '—'}</td><td>{l.locality || l.name}</td><td>{l.area}</td>
+                            <td><span className={`ev-pill-stage ${l.stage || 'New'}`}>{l.stage || 'New'}</span></td>
+                            <td>{new Date(l.createdAt).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody></table>
+                    ) : <div style={{ color: '#475569', fontSize: '0.72rem', fontStyle: 'italic' }}>No leads assigned yet.</div>}
+                  </div>
+                </td></tr>
+              )}
+            </React.Fragment>);
           })}
-          {(!salesPerformance || salesPerformance.length === 0) && <tr><td colSpan="8" style={{ color: '#9ca3af', fontSize: 12 }}>No sales team members yet. Invite salespeople from the Team section.</td></tr>}
+          {(!salesPerformance || salesPerformance.length === 0) && <tr><td colSpan="8" style={{ color: '#9ca3af', fontSize: 12 }}>No sales team members yet.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -457,8 +537,8 @@ function TeamPanel({ users }) {
       <div className="ev-panel-header"><div><div className="ev-panel-title">Team</div><div className="ev-panel-subtitle">Who has access to ACS Energy.</div></div><span className="ev-tag">Admin only</span></div>
       <table className="ev-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
         <tbody>
-          {users.map((u) => (<tr key={u.id || u._id}><td>{u.name}</td><td>{u.email}</td><td>{u.role}</td><td><button type="button" className="ev-danger-btn" onClick={() => { if (window.confirm(`Remove ${u.name} (${u.role}) from access?`)) { window.dispatchEvent(new CustomEvent('acs-remove-user', { detail: { id: u.id || u._id } })); } }}>Remove</button></td></tr>))}
-          {users.length === 0 && <tr><td colSpan="4" style={{ fontSize: 12, color: '#9ca3af' }}>No additional team members yet.</td></tr>}
+          {users.map((u) => (<tr key={u.id || u._id}><td>{u.name}</td><td>{u.email}</td><td>{u.role}</td><td><button type="button" className="ev-danger-btn" onClick={() => { if (window.confirm(`Remove ${u.name}?`)) { window.dispatchEvent(new CustomEvent('acs-remove-user', { detail: { id: u.id || u._id } })); } }}>Remove</button></td></tr>))}
+          {users.length === 0 && <tr><td colSpan="4" style={{ fontSize: 12, color: '#9ca3af' }}>No team members yet.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -504,35 +584,29 @@ function AdminDashboard({ auth }) {
 
   const refreshLeads = async () => { const all = await apiFetch('/leads', { token: auth.token }); setLeads(all); };
   const refreshMetrics = async () => { const m = await apiFetch('/reports/summary', { token: auth.token }); setMetrics(m); };
-  const openLead = async (lead) => { setSelectedLead(lead); const details = await apiFetch(`/leads/${lead._id}`, { token: auth.token }); setSelectedDetails(details); };
+  const openLead = async (lead) => { setSelectedLead(lead); try { const details = await apiFetch(`/leads/${lead._id}`, { token: auth.token }); setSelectedDetails(details); } catch (e) { console.error(e); } };
   const handleAddActivity = async (leadId, payload, opts = {}) => {
-    if (opts.updateStage) { await apiFetch(`/leads/${leadId}`, { method: 'PUT', token: auth.token, body: { stage: opts.updateStage } }); }
+    if (opts.updateStage) { await apiFetch(`/leads/${leadId}`, { method: 'PUT', token: auth.token, body: { stage: opts.updateStage, stageNote: opts.stageNote } }); }
     await apiFetch(`/leads/${leadId}/activities`, { method: 'POST', token: auth.token, body: payload });
-    setToast({ message: opts.updateStage ? `Stage moved to ${opts.updateStage}` : 'Activity logged', meta: 'Timeline updated for this lead' });
+    setToast({ message: opts.updateStage ? `Stage moved to ${opts.updateStage}` : 'Activity logged', meta: '' });
     if (selectedLead && selectedLead._id === leadId) { const fresh = await apiFetch(`/leads/${leadId}`, { token: auth.token }); setSelectedDetails(fresh); setSelectedLead(fresh.lead || selectedLead); }
     refreshLeads(); refreshMetrics(); refreshSalesPerf();
   };
   const handleCancelLead = async (leadId) => {
-    try {
-      await apiFetch(`/leads/${leadId}`, { method: 'DELETE', token: auth.token });
-      setToast({ message: 'Order cancelled', meta: 'Lead and related history removed' });
-      if (selectedLead && selectedLead._id === leadId) { setSelectedLead(null); setSelectedDetails(null); }
-      refreshLeads(); refreshMetrics(); refreshSalesPerf();
-    } catch (err) { console.error(err); setToast({ message: 'Could not cancel order', meta: 'Check backend connection' }); }
+    try { await apiFetch(`/leads/${leadId}`, { method: 'DELETE', token: auth.token }); setToast({ message: 'Order cancelled', meta: '' }); if (selectedLead && selectedLead._id === leadId) { setSelectedLead(null); setSelectedDetails(null); } refreshLeads(); refreshMetrics(); refreshSalesPerf(); } catch (err) { console.error(err); setToast({ message: 'Could not cancel order', meta: '' }); }
   };
-  const refreshUsers = async () => { if (auth.user?.role !== 'admin') return; const all = await apiFetch('/users', { token: auth.token }); setUsers(all); };
-  const refreshSalesPerf = async () => { if (auth.user?.role !== 'admin') return; try { const perf = await apiFetch('/users/performance', { token: auth.token }); setSalesPerformance(perf); } catch (e) { console.error(e); } };
+  const refreshUsers = async () => { const all = await apiFetch('/users', { token: auth.token }); setUsers(all); };
+  const refreshSalesPerf = async () => { try { const perf = await apiFetch('/users/performance', { token: auth.token }); setSalesPerformance(perf); } catch (e) { console.error(e); } };
   const handleUpdateTarget = async (userId, target) => {
     await apiFetch(`/users/${userId}`, { method: 'PUT', token: auth.token, body: { salesTarget: target } });
-    setToast({ message: 'Sales target updated', meta: '' });
-    refreshSalesPerf();
+    setToast({ message: 'Sales target updated', meta: '' }); refreshSalesPerf();
   };
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     const handler = async (e) => {
       const id = e.detail?.id; if (!id) return;
-      try { await apiFetch(`/users/${id}`, { method: 'DELETE', token: auth.token }); setToast({ message: 'User removed', meta: '' }); refreshUsers(); refreshSalesPerf(); } catch (err) { console.error(err); setToast({ message: 'Could not remove user', meta: '' }); }
+      try { await apiFetch(`/users/${id}`, { method: 'DELETE', token: auth.token }); setToast({ message: 'User removed', meta: '' }); refreshUsers(); refreshSalesPerf(); } catch (err) { console.error(err); }
     };
     window.addEventListener('acs-remove-user', handler);
     return () => window.removeEventListener('acs-remove-user', handler);
@@ -540,19 +614,20 @@ function AdminDashboard({ auth }) {
   useEffect(() => { if (!auth.token) return; refreshLeads(); refreshMetrics(); refreshUsers(); refreshSalesPerf(); }, [auth.token]);
   /* eslint-enable react-hooks/exhaustive-deps */
   useEffect(() => { if (!toast.message) return; const t = setTimeout(() => setToast({ message: '', meta: '' }), 3000); return () => clearTimeout(t); }, [toast]);
-  const handleLeadSubmitted = (leadId, error) => { if (error) { setToast({ message: 'Could not create lead', meta: '' }); return; } setToast({ message: 'Lead captured', meta: leadId ? `Lead ID: ${leadId}` : '' }); refreshLeads(); refreshMetrics(); };
+  const handleLeadSubmitted = (leadId, error) => { if (error) { setToast({ message: 'Could not create lead', meta: '' }); return; } setToast({ message: 'Lead captured & auto-assigned', meta: leadId ? `Lead ID: ${leadId}` : '' }); refreshLeads(); refreshMetrics(); refreshSalesPerf(); };
 
   return (
     <div className="ev-layout">
       <AppShell user={auth.user} onLogout={auth.logout} view={view} setView={setView} />
       <main className="ev-main">
-        {view === 'capture' && <div style={{ width: '100%' }}><PublicLeadForm onSubmitted={handleLeadSubmitted} token={auth.token} salesUsers={users} /></div>}
-        {view === 'pipeline' && <div style={{ width: '100%' }}><div className="ev-grid ev-grid-pipeline"><div><KanbanBoard leads={leads} onSelect={openLead} /></div><MetricsPanel metrics={metrics} onGoToReports={() => setView('reports')} /></div><LeadList leads={leads} onSelect={openLead} /></div>}
-        {view === 'pipelineHealth' && <div style={{ width: '100%' }}><MetricsPanel metrics={metrics} onGoToReports={() => setView('reports')} /></div>}
-        {view === 'reports' && <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 16 }}><div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}><MetricsPanel metrics={metrics} /><LeadList leads={leads} onSelect={openLead} /></div><LeadDetail lead={selectedLead} details={selectedDetails} onAddActivity={handleAddActivity} onCancel={handleCancelLead} /></div>}
-        {view === 'history' && <div style={{ width: '100%' }}><div className="ev-panel-header"><div><div className="ev-panel-title">Success history</div><div className="ev-panel-subtitle">All orders marked as success (Won stage).</div></div></div><LeadList leads={leads.filter((l) => l.stage === 'Won')} onSelect={openLead} /></div>}
-        {view === 'salesTeam' && auth.user?.role === 'admin' && <div style={{ width: '100%' }}><SalesTeamPanel salesPerformance={salesPerformance} onUpdateTarget={handleUpdateTarget} auth={auth} /></div>}
-        {view === 'team' && auth.user?.role === 'admin' && <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}><TeamPanel users={users} /><InviteUserPanel onCreated={() => { refreshUsers(); refreshSalesPerf(); }} /></div>}
+        {view === 'capture' && <div style={{ width: '100%' }}><PublicLeadForm onSubmitted={handleLeadSubmitted} /></div>}
+        {view === 'pipeline' && <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}><KanbanBoard leads={leads} onSelect={openLead} /><LeadDetail lead={selectedLead} details={selectedDetails} onAddActivity={handleAddActivity} onCancel={handleCancelLead} /></div>}
+        {view === 'leadList' && <div style={{ width: '100%' }}><LeadList leads={leads} onSelect={openLead} users={users} token={auth.token} showFilters /></div>}
+        {view === 'pipelineHealth' && <div style={{ width: '100%' }}><MetricsPanel metrics={metrics} /></div>}
+        {view === 'reports' && <div style={{ width: '100%' }}><LeadDetail lead={selectedLead} details={selectedDetails} onAddActivity={handleAddActivity} onCancel={handleCancelLead} /></div>}
+        {view === 'history' && <div style={{ width: '100%' }}><div className="ev-panel-header"><div><div className="ev-panel-title">Success history</div><div className="ev-panel-subtitle">All orders marked Won.</div></div></div><LeadList leads={leads.filter((l) => l.stage === 'Won')} onSelect={openLead} /></div>}
+        {view === 'salesTeam' && <div style={{ width: '100%' }}><SalesTeamPanel salesPerformance={salesPerformance} onUpdateTarget={handleUpdateTarget} onSelectLead={(l) => { openLead(l); setView('pipeline'); }} /></div>}
+        {view === 'team' && <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}><TeamPanel users={users} /><InviteUserPanel onCreated={() => { refreshUsers(); refreshSalesPerf(); }} /></div>}
       </main>
       <Toast message={toast.message} meta={toast.meta} />
     </div>
@@ -571,16 +646,16 @@ function SalesDashboard({ auth }) {
   const refreshLeads = async () => { const all = await apiFetch('/leads', { token: auth.token }); setLeads(all); };
   const refreshMetrics = async () => { const m = await apiFetch('/reports/summary', { token: auth.token }); setMetrics(m); };
   const refreshMyInfo = async () => { try { const info = await apiFetch('/users/me', { token: auth.token }); setMyInfo(info); } catch (e) { console.error(e); } };
-  const openLead = async (lead) => { setSelectedLead(lead); const details = await apiFetch(`/leads/${lead._id}`, { token: auth.token }); setSelectedDetails(details); };
+  const openLead = async (lead) => { setSelectedLead(lead); try { const details = await apiFetch(`/leads/${lead._id}`, { token: auth.token }); setSelectedDetails(details); } catch (e) { console.error(e); setToast({ message: 'Access denied to this lead', meta: '' }); } };
   const handleAddActivity = async (leadId, payload, opts = {}) => {
-    if (opts.updateStage) { await apiFetch(`/leads/${leadId}`, { method: 'PUT', token: auth.token, body: { stage: opts.updateStage } }); }
+    if (opts.updateStage) { await apiFetch(`/leads/${leadId}`, { method: 'PUT', token: auth.token, body: { stage: opts.updateStage, stageNote: opts.stageNote } }); }
     await apiFetch(`/leads/${leadId}/activities`, { method: 'POST', token: auth.token, body: payload });
     setToast({ message: opts.updateStage ? `Stage moved to ${opts.updateStage}` : 'Activity logged', meta: '' });
     if (selectedLead && selectedLead._id === leadId) { const fresh = await apiFetch(`/leads/${leadId}`, { token: auth.token }); setSelectedDetails(fresh); setSelectedLead(fresh.lead || selectedLead); }
     refreshLeads(); refreshMetrics(); refreshMyInfo();
   };
   const handleCancelLead = async (leadId) => {
-    try { await apiFetch(`/leads/${leadId}`, { method: 'DELETE', token: auth.token }); setToast({ message: 'Order cancelled', meta: '' }); if (selectedLead && selectedLead._id === leadId) { setSelectedLead(null); setSelectedDetails(null); } refreshLeads(); refreshMetrics(); refreshMyInfo(); } catch (err) { console.error(err); setToast({ message: 'Could not cancel order', meta: '' }); }
+    try { await apiFetch(`/leads/${leadId}`, { method: 'DELETE', token: auth.token }); setToast({ message: 'Order cancelled', meta: '' }); if (selectedLead && selectedLead._id === leadId) { setSelectedLead(null); setSelectedDetails(null); } refreshLeads(); refreshMyInfo(); } catch (err) { console.error(err); setToast({ message: 'Could not cancel order', meta: '' }); }
   };
 
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -588,20 +663,20 @@ function SalesDashboard({ auth }) {
   /* eslint-enable react-hooks/exhaustive-deps */
   useEffect(() => { if (!toast.message) return; const t = setTimeout(() => setToast({ message: '', meta: '' }), 3000); return () => clearTimeout(t); }, [toast]);
 
-  const myLeads = leads.filter(l => l.owner && (l.owner._id === auth.user.id || l.owner === auth.user.id));
   const pct = myInfo && myInfo.salesTarget > 0 ? Math.min(100, Math.round(((myInfo.wonLeads || 0) / myInfo.salesTarget) * 100)) : 0;
 
   return (
     <div className="ev-layout">
       <AppShell user={auth.user} onLogout={auth.logout} view={view} setView={setView} />
       <main className="ev-main">
-        {view === 'pipeline' && <div style={{ width: '100%' }}><div className="ev-grid ev-grid-pipeline"><div><KanbanBoard leads={myLeads} onSelect={openLead} /></div><MetricsPanel metrics={metrics} onGoToReports={() => setView('reports')} /></div><LeadList leads={myLeads} onSelect={openLead} /></div>}
-        {view === 'capture' && <div style={{ width: '100%' }}><PublicLeadForm onSubmitted={(id, err) => { if (err) { setToast({ message: 'Could not create lead', meta: '' }); return; } setToast({ message: 'Lead captured', meta: id ? `Lead ID: ${id}` : '' }); refreshLeads(); }} /></div>}
+        {view === 'pipeline' && <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}><KanbanBoard leads={leads} onSelect={openLead} /><LeadDetail lead={selectedLead} details={selectedDetails} onAddActivity={handleAddActivity} onCancel={handleCancelLead} /></div>}
+        {view === 'capture' && <div style={{ width: '100%' }}><PublicLeadForm onSubmitted={(id, err) => { if (err) { setToast({ message: 'Could not create lead', meta: '' }); return; } setToast({ message: 'Lead captured & auto-assigned', meta: id ? `Lead ID: ${id}` : '' }); refreshLeads(); }} /></div>}
+        {view === 'leadList' && <div style={{ width: '100%' }}><LeadList leads={leads} onSelect={openLead} token={auth.token} showFilters /></div>}
         {view === 'pipelineHealth' && <div style={{ width: '100%' }}><MetricsPanel metrics={metrics} /></div>}
         {view === 'myTarget' && (
           <div style={{ width: '100%' }}>
             <div className="ev-panel">
-              <div className="ev-panel-header"><div><div className="ev-panel-title">🎯 My Sales Target</div><div className="ev-panel-subtitle">Track your progress towards your sales target.</div></div></div>
+              <div className="ev-panel-header"><div><div className="ev-panel-title">🎯 My Sales Target</div><div className="ev-panel-subtitle">Track your progress.</div></div></div>
               <div className="ev-metric-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 <div className="ev-metric-card"><div className="ev-metric-label"><span>My Leads</span></div><div className="ev-metric-value" style={{ color: '#67e8f9' }}>{myInfo?.assignedLeads ?? '—'}</div></div>
                 <div className="ev-metric-card"><div className="ev-metric-label"><span>Won Deals</span></div><div className="ev-metric-value" style={{ color: '#4ade80' }}>{myInfo?.wonLeads ?? '—'}</div></div>
@@ -612,14 +687,14 @@ function SalesDashboard({ auth }) {
                 <div className="ev-progress-bar" style={{ marginTop: 6, height: 12 }}><div className={`ev-progress-fill ${myInfo?.incentiveEligible ? 'achieved' : ''}`} style={{ width: `${pct}%` }} /></div>
               </div>
               <div style={{ marginTop: 12, textAlign: 'center' }}>
-                {myInfo?.incentiveEligible ? <span className="ev-incentive-badge achieved" style={{ fontSize: '0.85rem', padding: '0.4rem 1rem' }}>🏆 Congratulations! Target Achieved — Bonus Eligible!</span> : myInfo?.salesTarget > 0 ? <span className="ev-incentive-badge pending" style={{ fontSize: '0.8rem', padding: '0.35rem 0.9rem' }}>⏳ {(myInfo?.salesTarget || 0) - (myInfo?.wonLeads || 0)} more deals to hit target</span> : <span style={{ color: '#64748b', fontSize: '0.8rem' }}>No sales target assigned yet. Contact your admin.</span>}
+                {myInfo?.incentiveEligible ? <span className="ev-incentive-badge achieved" style={{ fontSize: '0.85rem', padding: '0.4rem 1rem' }}>🏆 Congratulations! Target Achieved — Bonus Eligible!</span> : myInfo?.salesTarget > 0 ? <span className="ev-incentive-badge pending" style={{ fontSize: '0.8rem', padding: '0.35rem 0.9rem' }}>⏳ {(myInfo?.salesTarget || 0) - (myInfo?.wonLeads || 0)} more to target</span> : <span style={{ color: '#64748b', fontSize: '0.8rem' }}>No sales target assigned yet.</span>}
               </div>
             </div>
-            <LeadList leads={myLeads} onSelect={openLead} />
+            <LeadList leads={leads} onSelect={openLead} token={auth.token} />
           </div>
         )}
-        {view === 'reports' && <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 16 }}><div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}><MetricsPanel metrics={metrics} /><LeadList leads={myLeads} onSelect={openLead} /></div><LeadDetail lead={selectedLead} details={selectedDetails} onAddActivity={handleAddActivity} onCancel={handleCancelLead} /></div>}
-        {view === 'history' && <div style={{ width: '100%' }}><div className="ev-panel-header"><div><div className="ev-panel-title">My Success History</div><div className="ev-panel-subtitle">Won deals assigned to you.</div></div></div><LeadList leads={myLeads.filter(l => l.stage === 'Won')} onSelect={openLead} /></div>}
+        {view === 'reports' && <div style={{ width: '100%' }}><LeadDetail lead={selectedLead} details={selectedDetails} onAddActivity={handleAddActivity} onCancel={handleCancelLead} /></div>}
+        {view === 'history' && <div style={{ width: '100%' }}><div className="ev-panel-header"><div><div className="ev-panel-title">My Success History</div><div className="ev-panel-subtitle">Won deals assigned to you.</div></div></div><LeadList leads={leads.filter(l => l.stage === 'Won')} onSelect={openLead} /></div>}
       </main>
       <Toast message={toast.message} meta={toast.meta} />
     </div>

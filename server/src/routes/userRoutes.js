@@ -43,6 +43,10 @@ router.get("/performance", async (req, res) => {
       user.incentiveEligible = incentiveEligible;
       await user.save();
     }
+    const leadsList = await Lead.find(
+      { owner: user._id },
+      "leadId name locality area stage createdAt"
+    ).sort({ createdAt: -1 });
     result.push({
       _id: user._id,
       name: user.name,
@@ -55,6 +59,7 @@ router.get("/performance", async (req, res) => {
       incentiveEligible,
       assignedLeads,
       pendingLeads,
+      leads: leadsList,
     });
   }
   res.json(result);
